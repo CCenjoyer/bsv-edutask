@@ -1,48 +1,48 @@
 import pytest
-import pymongo
 
+from pymongo import MongoClient
 from pymongo.errors import WriteError
 from src.util.dao import DAO
 from dotenv import dotenv_values
+from unittest.mock import MagicMock, patch
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def db_connection():
-    """Fixture to connect to database and create a test database."""
-    client = pymongo.MongoClient(dotenv_values('.env').get('MONGO_URL'))
-    db = client['test_db']
-    yield db
-    client.drop_database('test_db')
+    """Fixture to create a MongoDB connection."""
+    client = MongoClient(dotenv_values('.env').get('MONGO_URL'))
+    yield client["test_db"]
+    client.drop_database("test_db")
     client.close()
 
 @pytest.fixture
 def sut(db_connection):
-    dao = DAO("video")
-    dao.db = db_connection
-    dao.collection = dao.db["video"]
-    yield dao
-    db_connection.drop_collection("video")
+    with patch('src.util.dao.pymongo.MongoClient') as mock_client:
+        mock_sut_client = MagicMock()
+        mock_sut_client.edutask = db_connection
+        mock_client.return_value = mock_sut_client
+        yield DAO("video")
+        db_connection.drop_collection("video")
 
 def test_create_valid(sut):
     video_data_valid = {"url": "https://www.google.com/"}
     result = sut.create(video_data_valid)
     assert "_id" in result
-
-def test_create_no_data(sut):
-    no_data = {}
-    with pytest.raises(WriteError):
-        sut.create(no_data)
+    assert "url" in result
 
 def test_create_extra(sut):
+    """Test that extra data can still create document."""
     extra_data = {"url": "https://www.google.com/", "extra": "123"}
     result = sut.create(extra_data)
     assert "_id" in result
+    assert "extra" in result
 
-def test_wrong_data_type(sut):
-    value_wrong_type = {"url": 123}
+@pytest.mark.parametrize("invalid_data", [
+    {},
+    {"url": 123},
+    {"url": None},
+    {"string": "https://www.google.com/"},
+])
+def test_create_invalid(sut, invalid_data):
+    """Test that various invalid database data raises a WriteError."""
     with pytest.raises(WriteError):
-        sut.create(value_wrong_type)
-
-def test_create_value_none(sut):
-    video_data_none_value = {"url": None}
-    with pytest.raises(WriteError):
-        sut.create(video_data_none_value)
+        sut.create(invalid_data)
